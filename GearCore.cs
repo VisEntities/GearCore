@@ -13,7 +13,7 @@ using System.IO;
 namespace Oxide.Plugins
 {
     [Info("Gear Core", "VisEntities", "1.0.0")]
-    [Description(" ")]
+    [Description("An API for other plugins to create and equip gear sets.")]
     public class GearCore : RustPlugin
     {
         #region Fields
