@@ -5,10 +5,10 @@
  */
 
 using Newtonsoft.Json;
-using System.Collections.Generic;
-using System.IO;
 using Oxide.Core;
 using Oxide.Core.Plugins;
+using System.Collections.Generic;
+using System.IO;
 
 namespace Oxide.Plugins
 {
@@ -198,8 +198,9 @@ namespace Oxide.Plugins
         private static class Cmd
         {
             /// <summary>
-            /// gear save <gearSetName>
-            /// gear equip <gearSetName>
+            /// gear save <name>
+            /// gear equip <name>
+            /// gear delete <name>
             /// gear list
             /// </summary>
             public const string GEAR = "gear";
@@ -212,49 +213,91 @@ namespace Oxide.Plugins
                 return;
 
             if (!PermissionUtil.HasPermission(player, PermissionUtil.USE))
+            {
+                SendMessage(player, Lang.NoPermission);
                 return;
+            }
 
             if (args.Length < 1)
             {
-                PrintToChat("Usage: /gear save <name>, /gear equip <name>, or /gear list");
+                SendMessage(player, Lang.InvalidCommand);
                 return;
             }
 
             string subCommand = args[0].ToLower();
-            string gearSetName = args.Length > 1 ? args[1] : null;
+            string gearSetName = null;
+            if (args.Length > 1)
+                gearSetName = args[1];
 
             switch (subCommand)
             {
                 case "save":
-                    if (gearSetName == null)
                     {
-                        PrintToChat("Usage: /gear save <name>");
-                        return;
+                        if (gearSetName == null)
+                        {
+                            SendMessage(player, Lang.UsageSaveGear);
+                            return;
+                        }
+
+                        bool isUpdated = SaveOrUpdateGearSet(player, gearSetName);
+
+                        if (isUpdated)
+                            SendMessage(player, Lang.GearUpdated, gearSetName);
+                        else
+                            SendMessage(player, Lang.GearSaved, gearSetName);
+                        
+                        break;
                     }
-                    SaveGearSet(player, gearSetName);
-                    break;
                 case "equip":
-                    if (gearSetName == null)
                     {
-                        PrintToChat("Usage: /gear equip <name>");
-                        return;
+                        if (gearSetName == null)
+                        {
+                            SendMessage(player, Lang.UsageEquipGear);
+                            return;
+                        }
+                        if (EquipGearSet(player, gearSetName))
+                            SendMessage(player, Lang.GearEquipped, gearSetName);
+                        else
+                            SendMessage(player, Lang.GearSetNotFound, gearSetName);
+                        break;
                     }
-                    EquipGearSet(player, gearSetName);
-                    break;
                 case "list":
-                    ListGearSets(player);
-                    break;
+                    {
+                        if (_storedData.GearSets.Count == 0)
+                        {
+                            SendMessage(player, Lang.NoGearSetsAvailable);
+                            return;
+                        }
+
+                        string gearSets = GetGearSets();
+                        SendMessage(player, Lang.AvailableGearSets, gearSets);
+                        break;
+                    }
+                case "delete":
+                    {
+                        if (gearSetName == null)
+                        {
+                            SendMessage(player, Lang.UsageDeleteGear);
+                            return;
+                        }
+                        if (DeleteGearSet(gearSetName))
+                            SendMessage(player, Lang.GearDeleted, gearSetName);
+                        else
+                            SendMessage(player, Lang.GearSetNotFound, gearSetName);
+                        break;
+                    }
+
                 default:
-                    PrintToChat("Invalid command. Usage: /gear save <name>, /gear equip <name>, or /gear list");
+                    SendMessage(player, Lang.InvalidCommand);
                     break;
             }
         }
 
         #endregion Commands
 
-        #region Save
+        #region Gear Set Handling
 
-        private void SaveGearSet(BasePlayer player, string gearSetName)
+        private bool SaveOrUpdateGearSet(BasePlayer player, string gearSetName)
         {
             GearSet gearSet = new GearSet();
 
@@ -262,17 +305,12 @@ namespace Oxide.Plugins
             GetItemsFromContainer(player.inventory.containerWear, gearSet.Wear);
             GetItemsFromContainer(player.inventory.containerBelt, gearSet.Belt);
 
+            bool isUpdate = _storedData.GearSets.ContainsKey(gearSetName);
+
             _storedData.GearSets[gearSetName] = gearSet;
             DataFileUtil.Save(DataFileUtil.GetFilePath(), _storedData);
 
-            if (_storedData.GearSets.ContainsKey(gearSetName))
-            {
-                PrintToChat($"Gear set '{gearSetName}' updated successfully.");
-            }
-            else
-            {
-                PrintToChat($"Gear set '{gearSetName}' created and saved successfully.");
-            }
+            return isUpdate;
         }
 
         private void GetItemsFromContainer(ItemContainer container, List<ItemInfo> itemList)
@@ -292,7 +330,6 @@ namespace Oxide.Plugins
                 if (item.info.category == ItemCategory.Weapon && item.GetHeldEntity() is BaseProjectile weapon)
                 {
                     SubItemInfo ammunitionInfo = new SubItemInfo();
-
                     if (weapon.primaryMagazine.ammoType != null)
                         ammunitionInfo.ShortName = weapon.primaryMagazine.ammoType.shortname;
                     ammunitionInfo.Amount = weapon.primaryMagazine.contents;
@@ -317,12 +354,64 @@ namespace Oxide.Plugins
             }
         }
 
-        #endregion Save
+        private void EquipItemsToContainer(ItemContainer container, List<ItemInfo> itemList)
+        {
+            foreach (ItemInfo itemInfo in itemList)
+            {
+                Item item = ItemManager.CreateByName(itemInfo.ShortName, itemInfo.Amount, itemInfo.SkinId);
+                if (item != null)
+                {
+                    item.condition = itemInfo.Condition;
+                    item.position = itemInfo.Position;
+                    item.name = itemInfo.Name;
+                    item.SetParent(container);
 
-        #region Equip
+                    if (item.info.category == ItemCategory.Weapon && item.GetHeldEntity() is BaseProjectile weapon)
+                    {
+                        if (itemInfo.Ammunition != null)
+                        {
+                            weapon.primaryMagazine.contents = itemInfo.Ammunition.Amount;
+                            ItemDefinition ammoDef = ItemManager.FindItemDefinition(itemInfo.Ammunition.ShortName);
+                            if (ammoDef != null)
+                                weapon.primaryMagazine.ammoType = ammoDef;
+                        }
+                    }
+
+                    if (itemInfo.Attachments.Count > 0 && item.contents != null)
+                    {
+                        foreach (var attachmentInfo in itemInfo.Attachments)
+                        {
+                            Item attachment = ItemManager.CreateByName(attachmentInfo.ShortName, attachmentInfo.Amount);
+                            if (attachment != null)
+                                attachment.SetParent(item.contents);
+                        }
+                    }
+                }
+            }
+        }
+
+        private string GetGearSets()
+        {
+            return string.Join("\n", _storedData.GearSets.Keys);
+        }
+
+        private bool DeleteGearSet(string gearSetName)
+        {
+            if (!_storedData.GearSets.ContainsKey(gearSetName))
+                return false;
+
+            _storedData.GearSets.Remove(gearSetName);
+            DataFileUtil.Save(DataFileUtil.GetFilePath(), _storedData);
+
+            return true;
+        }
+
+        #endregion Gear Set Handling
+
+        #region Hooks
 
         [HookMethod(nameof(EquipGearSet))]
-        private bool EquipGearSet(BasePlayer player, string gearSetName, bool clearCurrentInventory = false)
+        private bool EquipGearSet(BasePlayer player, string gearSetName, bool clearCurrentInventory = true)
         {
             if (!_storedData.GearSets.ContainsKey(gearSetName))
                 return false;
@@ -343,69 +432,24 @@ namespace Oxide.Plugins
             return true;
         }
 
-        private void EquipItemsToContainer(ItemContainer container, List<ItemInfo> itemList)
-        {
-            foreach (ItemInfo itemInfo in itemList)
-            {
-                Item item = ItemManager.CreateByName(itemInfo.ShortName, itemInfo.Amount, itemInfo.SkinId);
-                if (item != null)
-                {
-                    item.condition = itemInfo.Condition;
-                    item.position = itemInfo.Position;
-                    item.name = itemInfo.Name;
-                    item.SetParent(container);
-
-                    if (item.info.category == ItemCategory.Weapon && item.GetHeldEntity() is BaseProjectile weapon)
-                    {
-                        if (itemInfo.Ammunition != null)
-                        {
-                            weapon.primaryMagazine.contents = itemInfo.Ammunition.Amount;
-
-                            ItemDefinition ammoDef = ItemManager.FindItemDefinition(itemInfo.Ammunition.ShortName);
-                            if (ammoDef != null)
-                                weapon.primaryMagazine.ammoType = ammoDef;
-                        }
-                    }
-
-                    if (itemInfo.Attachments.Count > 0 && item.contents != null)
-                    {
-                        foreach (var attachmentInfo in itemInfo.Attachments)
-                        {
-                            Item attachment = ItemManager.CreateByName(attachmentInfo.ShortName, attachmentInfo.Amount);
-                            if (attachment != null)
-                                attachment.SetParent(item.contents);
-                        }
-                    }
-                }
-            }
-        }
-
-        #endregion Equip
-
-        #region List
-
-        private void ListGearSets(BasePlayer player)
-        {
-            if (_storedData.GearSets.Count == 0)
-            {
-                PrintToChat("No gear sets available.");
-                return;
-            }
-
-            PrintToChat("Available gear sets:");
-            foreach (var gearSet in _storedData.GearSets.Keys)
-            {
-                PrintToChat($"- {gearSet}");
-            }
-        }
-
-        #endregion List
+        #endregion Hook
 
         #region Localization
 
         private class Lang
         {
             public const string NoPermission = "NoPermission";
+            public const string InvalidCommand = "InvalidCommand";
+            public const string UsageSaveGear = "UsageSaveGear";
+            public const string UsageEquipGear = "UsageEquipGear";
+            public const string UsageDeleteGear = "UsageDeleteGear";
+            public const string GearEquipped = "GearEquipped";
+            public const string GearSetNotFound = "GearSetNotFound";
+            public const string GearUpdated = "GearUpdated";
+            public const string GearSaved = "GearSaved";
+            public const string GearDeleted = "GearDeleted";
+            public const string NoGearSetsAvailable = "NoGearSetsAvailable";
+            public const string AvailableGearSets = "AvailableGearSets";
         }
 
         protected override void LoadDefaultMessages()
@@ -413,6 +457,17 @@ namespace Oxide.Plugins
             lang.RegisterMessages(new Dictionary<string, string>
             {
                 [Lang.NoPermission] = "You don't have permission to use this command.",
+                [Lang.InvalidCommand] = "Invalid command. Correct usage:\n- <color=#F0E68C>/gear save <name></color> - Saves your inventory as a gear set.\n- <color=#F0E68C>/gear equip <name></color> - Equips the specified gear set.\n- <color=#F0E68C>/gear delete <name></color> - Deletes the specified gear set.\n- <color=#F0E68C>/gear list</color> - Lists all available gear sets.",
+                [Lang.UsageSaveGear] = "Invalid command. Correct usage:\n- <color=#F0E68C>/gear save <name></color> - Saves your inventory as a gear set.",
+                [Lang.UsageEquipGear] = "Invalid command. Correct usage:\n- <color=#F0E68C>/gear equip <name></color> - Equips the specified gear set.",
+                [Lang.UsageDeleteGear] = "Invalid command. Correct usage:\n- <color=#F0E68C>/gear delete <name></color> - Deletes the specified gear set.",
+                [Lang.GearEquipped] = "You have equipped the gear set <color=#ADFF2F>{0}</color>.",
+                [Lang.GearSetNotFound] = "Gear set <color=#ADFF2F>{0}</color> does not exist.",
+                [Lang.GearUpdated] = "Gear set <color=#ADFF2F>{0}</color> updated successfully.",
+                [Lang.GearSaved] = "Gear set <color=#ADFF2F>{0}</color> created and saved successfully.",
+                [Lang.GearDeleted] = "Gear set <color=#ADFF2F>{0}</color> deleted successfully.",
+                [Lang.NoGearSetsAvailable] = "No gear sets available.",
+                [Lang.AvailableGearSets] = "Available gear sets:\n- <color=#ADFF2F>{0}</color>",
 
             }, this, "en");
         }
