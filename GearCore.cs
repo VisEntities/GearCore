@@ -12,7 +12,7 @@ using System.IO;
 
 namespace Oxide.Plugins
 {
-    [Info("Gear Core", "VisEntities", "1.0.0")]
+    [Info("Gear Core", "VisEntities", "1.0.1")]
     [Description("An API for other plugins to create and equip gear sets.")]
     public class GearCore : RustPlugin
     {
@@ -411,14 +411,17 @@ namespace Oxide.Plugins
         #region Hooks
 
         [HookMethod(nameof(EquipGearSet))]
-        private bool EquipGearSet(BasePlayer player, string gearSetName, bool clearCurrentInventory = true)
+        private bool EquipGearSet(BasePlayer player, string gearSetName, bool clearInventory = true)
         {
+            if (string.IsNullOrEmpty(gearSetName))
+                return false;
+
             if (!_storedData.GearSets.ContainsKey(gearSetName))
                 return false;
 
             GearSet gearSet = _storedData.GearSets[gearSetName];
 
-            if (clearCurrentInventory)
+            if (clearInventory)
             {
                 player.inventory.containerMain.Clear();
                 player.inventory.containerWear.Clear();
