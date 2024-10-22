@@ -9,10 +9,11 @@ using Oxide.Core;
 using Oxide.Core.Plugins;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 
 namespace Oxide.Plugins
 {
-    [Info("Gear Core", "VisEntities", "1.1.0")]
+    [Info("Gear Core", "VisEntities", "1.1.1")]
     [Description("An API for other plugins to create and equip gear sets.")]
     public class GearCore : RustPlugin
     {
@@ -269,7 +270,7 @@ namespace Oxide.Plugins
                             return;
                         }
 
-                        string gearSets = GetGearSets();
+                        string gearSets = string.Join("\n", _storedData.GearSets.Select(set => $"- <color=#F0E68C>{set.Key}</color>"));
                         SendMessage(player, Lang.AvailableGearSets, gearSets);
                         break;
                     }
@@ -470,13 +471,13 @@ namespace Oxide.Plugins
                 [Lang.UsageSaveGear] = "Invalid command. Correct usage:\n- <color=#F0E68C>/gear save <name></color> - Saves your inventory as a gear set.",
                 [Lang.UsageEquipGear] = "Invalid command. Correct usage:\n- <color=#F0E68C>/gear equip <name></color> - Equips the specified gear set.",
                 [Lang.UsageDeleteGear] = "Invalid command. Correct usage:\n- <color=#F0E68C>/gear delete <name></color> - Deletes the specified gear set.",
-                [Lang.GearEquipped] = "You have equipped the gear set <color=#ADFF2F>{0}</color>.",
-                [Lang.GearSetNotFound] = "Gear set <color=#ADFF2F>{0}</color> does not exist.",
-                [Lang.GearUpdated] = "Gear set <color=#ADFF2F>{0}</color> updated successfully.",
-                [Lang.GearSaved] = "Gear set <color=#ADFF2F>{0}</color> created and saved successfully.",
-                [Lang.GearDeleted] = "Gear set <color=#ADFF2F>{0}</color> deleted successfully.",
+                [Lang.GearEquipped] = "You have equipped the gear set <color=#F0E68C>{0}</color>.",
+                [Lang.GearSetNotFound] = "Gear set <color=#F0E68C>{0}</color> does not exist.",
+                [Lang.GearUpdated] = "Gear set <color=#F0E68C>{0}</color> updated successfully.",
+                [Lang.GearSaved] = "Gear set <color=#F0E68C>{0}</color> created and saved successfully.",
+                [Lang.GearDeleted] = "Gear set <color=#F0E68C>{0}</color> deleted successfully.",
                 [Lang.NoGearSetsAvailable] = "No gear sets available.",
-                [Lang.AvailableGearSets] = "Available gear sets:\n- <color=#ADFF2F>{0}</color>",
+                [Lang.AvailableGearSets] = "Available gear sets:\n{0}",
 
             }, this, "en");
         }
@@ -487,7 +488,7 @@ namespace Oxide.Plugins
             if (args.Length > 0)
                 message = string.Format(message, args);
 
-            PrintToChat(message);
+            SendReply(player, message);
         }
 
         #endregion Localization
